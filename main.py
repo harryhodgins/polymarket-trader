@@ -1,35 +1,78 @@
 import json
+import time
+import matplotlib.pyplot as plt
+from datetime import datetime
 from polymarket_client import PolymarketClient
+
 
 def main():
     client = PolymarketClient()
 
-    print("Fetching open markets...")
-    markets = client.get_markets()
+    market_id = "1163699"
+    print(f"Fetching details for Market ID: {market_id}...")
 
-    if not markets:
-        print("No markets found")
+    # Step 1: Get the market details
+    market = client.get_market_details(market_id)
+    if not market:
+        print("Could not fetch market details.")
         return
 
-    print(f"Successfully fetched {len(markets)} markets.")
+    print(f"Selected Market: {market.get('question')}")
 
-    market = markets[0]
-
-    token_ids = json.loads(market.get("clobTokenIds", "[]"))
-
-    print("Raw token_ids:", token_ids)
-
-    if not token_ids:
-        print("No token IDs found")
+    # Extract the clobTokenIds
+    token_ids_str = market.get("clobTokenIds", "[]")
+    try:
+        token_ids = json.loads(token_ids_str)
+        if not token_ids:
+            print("No token IDs found for this market.")
+            return
+        target_token_id = token_ids[0]  # Grab the "Yes" token
+    except json.JSONDecodeError:
+        print("Invalid token ID format.")
         return
 
-    token_id = token_ids[0]
+    print(f"Target Asset ID: {target_token_id}")
 
-    print(f"Fetching price for token: {token_id}")
+    # Fetch chunked history
+    print("\nFetching historical price data (Hourly candles)...")
+    raw_response = client.get_token_history(
+        token_id=target_token_id, fidelity=60, total_days=30, chunk_days=7
+    )
 
-    price = client.get_token_price(token_id, side="BUY")
+    if not raw_response or "history" not in raw_response:
+        print("No historical data found.")
+        return
 
-    print(price)
+    history = raw_response["history"]
+    print(f"\nSuccessfully fetched and merged {len(history)} historical data points.")
+
+    # Check for price movement
+    unique_prices = set(point["p"] for point in history)
+    print(f"Number of unique prices in this dataset: {len(unique_prices)}")
+
+    # plot data
+
+    # Extract timestamps and prices
+    timestamps = [point["t"] for point in history]
+    prices = [point["p"] for point in history]
+
+    # Convert Unix timestamps to Python datetime objects
+    dates = [datetime.fromtimestamp(ts) for ts in timestamps]
+
+    plt.figure(figsize=(12, 6))
+    plt.plot(dates, prices, label="Market Price", color="blue", linewidth=1.5)
+    plt.title(
+        f"Polymarket Price History (Last 30 Days)\n{market.get('question')}",
+        fontsize=14,
+    )
+    plt.xlabel("Date", fontsize=12)
+    plt.ylabel("Price / Probability", fontsize=12)
+    plt.gcf().autofmt_xdate()
+    plt.grid(True, linestyle="--", alpha=0.7)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
 
 if __name__ == "__main__":
     main()
