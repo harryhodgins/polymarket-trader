@@ -4,7 +4,7 @@ __pycache__/
 *$py.class
 
 # Virtual Environment (if you want to keep this out of Git too)
-venv/
+.venv/
 .env
 
 # IDE settings (optional, but good practice)

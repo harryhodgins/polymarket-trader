@@ -1,5 +1,8 @@
+import logging
 import requests
 import time
+
+logger = logging.getLogger(__name__)
 
 
 class PolymarketClient:
@@ -11,37 +14,31 @@ class PolymarketClient:
             response = requests.request(method, url, params=params, json=data)
             response.raise_for_status()
             return response.json()
-        except requests.exceptions.HTTPError as http_err:
-            print(f"HTTP error occurred: {http_err} - {response.text}")
-        except requests.exceptions.ConnectionError as conn_err:
-            print(f"Connection error occurred: {conn_err}")
-        except requests.exceptions.Timeout as timeout_err:
-            print(f"Timeout error occurred: {timeout_err}")
-        except requests.exceptions.RequestException as req_err:
-            print(f"An unexpected error occurred: {req_err}")
-        return None
+        except requests.exceptions.RequestException as e:
+            logger.error(f"API Request failed: {e}")
+            return None
 
-    def get_markets(self, status: str = "open", limit: int = 10):
-        endpoint = "markets"
-        params = {"active": "true" if status == "open" else "false", "limit": limit}
-        return self._make_request("GET", endpoint, params=params)
+    def get_markets(
+        self,
+        status: str = "open",
+        limit: int = 10,
+        order: str = "volume",
+        ascending: bool = False,
+    ):
+        params = {
+            "active": "true" if status == "open" else "false",
+            "limit": limit,
+            "order": order,
+            "ascending": str(ascending).lower(),
+        }
+        return self._make_request("GET", "markets", params=params)
 
     def get_market_details(self, market_id: str):
-        endpoint = f"markets/{market_id}"
-        return self._make_request("GET", endpoint)
+        return self._make_request("GET", f"markets/{market_id}")
 
     def get_token_price(self, token_id, side="BUY"):
-        if isinstance(token_id, list):
-            raise ValueError(f"token_id must be a string, got list: {token_id}")
-
-        token_id = str(token_id).strip()
-
-        if token_id.startswith("["):
-            raise ValueError(f"Invalid token_id format: {token_id}")
-
         url = "https://clob.polymarket.com/price"
-        params = {"token_id": token_id, "side": side}
-
+        params = {"token_id": str(token_id).strip(), "side": side}
         response = requests.get(url, params=params)
         response.raise_for_status()
         return response.json()
@@ -50,27 +47,19 @@ class PolymarketClient:
         self,
         token_id: str,
         fidelity: int = 60,
-        total_days: int = 30,
+        total_days: int = 90,
         chunk_days: int = 7,
     ):
-        """
-        Fetches historical price data by chunking the time window to avoid API limits.
-        """
         url = "https://clob.polymarket.com/prices-history"
-
         end_ts = int(time.time())
         start_ts = end_ts - (total_days * 24 * 60 * 60)
 
         all_history = []
         current_end = end_ts
-
-        print(f"Fetching {total_days} days of data in {chunk_days}-day chunks...")
+        chunk_count = 0
 
         while current_end > start_ts:
-            current_start = current_end - (chunk_days * 24 * 60 * 60)
-            if current_start < start_ts:
-                current_start = start_ts
-
+            current_start = max(current_end - (chunk_days * 24 * 60 * 60), start_ts)
             params = {
                 "market": token_id,
                 "fidelity": fidelity,
@@ -78,35 +67,28 @@ class PolymarketClient:
                 "endTs": current_end,
             }
 
-            try:
-                response = requests.get(url, params=params)
-                response.raise_for_status()
-                data = response.json()
-                if "history" in data:
-                    chunk_data = data["history"]
-                    all_history.extend(chunk_data)
-                    print(
-                        f"  - Fetched {len(chunk_data)} points for chunk ending at {current_end}"
-                    )
-                else:
-                    print(
-                        f"  - No history key in response for chunk ending at {current_end}"
-                    )
-            except requests.exceptions.RequestException as req_err:
-                print(
-                    f"Error fetching chunk {current_start} to {current_end}: {req_err}"
+            response = requests.get(url, params=params)
+            if response.status_code == 200:
+                chunk_data = response.json().get("history", [])
+                all_history.extend(chunk_data)
+                logger.info(
+                    f"Downloaded chunk {chunk_count + 1}: {len(chunk_data)} data points."
                 )
-                if "response" in locals() and hasattr(response, "text"):
-                    print(f"Response text: {response.text[:200]}...")
+            else:
+                logger.warning(
+                    f"Chunk {chunk_count + 1} failed with status {response.status_code}."
+                )
 
             current_end = current_start
-
+            chunk_count += 1
             time.sleep(0.5)
 
         if not all_history:
+            logger.error("No historical data was retrieved from any chunks.")
             return None
 
         unique_history = {point["t"]: point for point in all_history}
-        sorted_history = sorted(unique_history.values(), key=lambda x: x["t"])
-
-        return {"history": sorted_history}
+        logger.info(
+            f"Data aggregation complete. Total unique points: {len(unique_history)}"
+        )
+        return {"history": sorted(unique_history.values(), key=lambda x: x["t"])}
