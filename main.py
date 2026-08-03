@@ -1,6 +1,7 @@
 import json
 import logging
 import matplotlib.pyplot as plt
+from matplotlib.patches import Patch
 from polymarket_client import PolymarketClient
 from feature_engineer import engineer_features
 from hmm import train_regime_model
@@ -52,30 +53,53 @@ def main():
     df["state"] = states
     logger.info("Generating regime visualization...")
 
-    fig, (ax1, ax2) = plt.subplots(
-        2, 1, figsize=(12, 10), sharex=True, gridspec_kw={"height_ratios": [3, 1]}
+    colors = ["#66c2a5", "#fc8d62", "#8da0cb"]
+
+    fig, (ax1, ax2, ax3) = plt.subplots(
+        3, 1, figsize=(12, 14), sharex=True, gridspec_kw={"height_ratios": [3, 3, 1]}
     )
     fig.suptitle(f"HMM Regime Analysis: {market.get('question')}", fontsize=16)
 
-    # Thin continuous line preserves the true price path
-    ax1.plot(df.index, df["price"], color="gray", linewidth=0.8, alpha=0.5)
-
-    # Scatter points colored by regime — no false connections across time gaps
+    # Plot 1: Background shading
+    ax1.plot(df.index, df["price"], color="black", lw=1)
     for i in range(n_components):
         mask = df["state"] == i
-        ax1.scatter(
-            df.index[mask], df["price"][mask], label=f"Regime {i}", s=12, alpha=0.85
+        ax1.fill_between(
+            df.index,
+            df["price"].min(),
+            df["price"].max(),
+            where=mask,
+            color=colors[i],
+            alpha=0.15,
+            step="post",
         )
-
+    legend_handles = [
+        Patch(color=colors[i], alpha=0.3, label=f"Regime {i}")
+        for i in range(n_components)
+    ]
+    ax1.legend(handles=legend_handles, loc="upper left")
     ax1.set_ylabel("Price / Probability")
-    ax1.set_title("Market Price colored by HMM Regimes")
+    ax1.set_title("Background Shading by Regime")
     ax1.grid(True, linestyle="--", alpha=0.5)
-    ax1.legend()
 
-    ax2.plot(df.index, df["state"], drawstyle="steps-post", color="black")
-    ax2.set_ylabel("Regime State")
-    ax2.set_title("Detected Market Regimes over Time")
-    ax2.set_yticks(range(n_components))
+    # Plot 2: Price line colored by regime
+    for i in range(len(df) - 1):
+        s = df["state"].iloc[i]
+        ax2.plot(
+            df.index[i : i + 2],
+            df["price"].iloc[i : i + 2],
+            color=colors[s],
+            lw=2,
+        )
+    ax2.set_ylabel("Price / Probability")
+    ax2.set_title("Price Line Colored by Regime")
+    ax2.grid(True, linestyle="--", alpha=0.5)
+
+    # Plot 3: State timeline
+    ax3.plot(df.index, df["state"], drawstyle="steps-post", color="black")
+    ax3.set_ylabel("Regime State")
+    ax3.set_title("Detected Market Regimes over Time")
+    ax3.set_yticks(range(n_components))
 
     plt.tight_layout()
     logger.info("Rendering plot window...")
