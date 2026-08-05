@@ -14,19 +14,21 @@ def engineer_features(raw_history: list) -> pd.DataFrame:
     df.rename(columns={"p": "price"}, inplace=True)
     df = df[["price"]].sort_index()
 
-    initial_rows = len(df)
+    # Clip prices to avoid log(0) or division by zero errors near bounds
+    df["price"] = df["price"].clip(lower=1e-4, upper=1.0 - 1e-4)
+
     df = df[df["price"] > 0]
-    if len(df) < initial_rows:
-        logger.warning(f"Dropped {initial_rows - len(df)} rows with zero prices.")
 
     logger.info("Calculating log returns and 24h rolling volatility...")
     df["log_return"] = np.log(df["price"] / df["price"].shift(1))
-    df["volatility_24h"] = df["log_return"].rolling(window=24).std()
+    df["volatility_24h"] = df["log_return"].rolling(window=6).std()
+
+    # CRITICAL FIX: Add forward return for causal mapping
+    # The return we actually want to predict (from t to t+1)
+    df["fwd_log_return"] = df["log_return"].shift(-1)
 
     clean_df = df.dropna()
     dropped_rows = len(df) - len(clean_df)
-    logger.info(
-        f"Dropped {dropped_rows} rows containing NaN values from rolling calculations."
-    )
+    logger.info(f"Dropped {dropped_rows} rows containing NaN values.")
 
     return clean_df
